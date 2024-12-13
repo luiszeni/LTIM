@@ -296,6 +296,9 @@ _C.MODEL.ROI_WEAK_HEAD.USE_TEMPLATE = False
 _C.MODEL.ROI_WEAK_HEAD.CENTER_LOSS_WEIGHT = 0.003
 _C.MODEL.ROI_WEAK_HEAD.CENTER_LOSS_ALPHA = 0.5
 
+_C.MODEL.ROI_WEAK_HEAD.D_V = 0.05
+_C.MODEL.ROI_WEAK_HEAD.D_D = 0.15
+
 # ---------------------------------------------------------------------------- #
 # ResNe[X]t options (ResNets = {ResNet, ResNeXt}
 # Note that parts of a resnet may be used for both the backbone and the head

@@ -3,11 +3,12 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from wetectron.layers import ROIAlign, ROIPool
+from torchvision.ops import RoIPool
+# from wetectron.layers import ROIAlign, ROIPool
 from wetectron.config import cfg
 
 from .utils import cat
-
+from pdb import set_trace as pause
 
 class LevelMapper(object):
     """Determine which FPN level each RoI in a set of RoIs should map to based
@@ -65,7 +66,7 @@ class Pooler(nn.Module):
         for scale in scales:
             if cfg.MODEL.ROI_BOX_HEAD.POOLER_METHOD == "ROIPool":
                 poolers.append(
-                    ROIPool(output_size, spatial_scale=scale)
+                    RoIPool(output_size, spatial_scale=scale)
                 )
             elif cfg.MODEL.ROI_BOX_HEAD.POOLER_METHOD == "ROIAlign":
                 poolers.append(

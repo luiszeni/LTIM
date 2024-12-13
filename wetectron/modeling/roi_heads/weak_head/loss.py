@@ -9,7 +9,7 @@ import random
 import os
 import numpy as np
 from torch.nn import functional as F
-
+from pdb import set_trace as pause
 from wetectron.layers import smooth_l1_loss
 from wetectron.modeling import registry
 from wetectron.modeling.utils import cat
@@ -19,8 +19,12 @@ from wetectron.structures.bounding_box import BoxList
 from wetectron.modeling.matcher import Matcher
 from wetectron.utils.utils import to_boxlist, cal_iou, easy_nms, cos_sim, get_share_class, generate_img_label
 from .pseudo_label_generator import oicr_layer, mist_layer, od_layer
-from wetectron.modeling.roi_heads.sim_head.sim_loss import Supcon_Loss, SupConLossV2
+from wetectron.modeling.roi_heads.sim_head.sim_loss import SupConLossV2
 from wetectron.modeling.roi_heads.sim_head.sim_net import Sim_Net
+import cv2
+
+from torchvision.ops import box_iou, box_area
+
 
 def compute_avg_img_accuracy(labels_per_im, score_per_im, num_classes):
     """
@@ -169,6 +173,34 @@ class RoILossComputation(object):
         return return_loss_dict, return_acc_dict
 
 
+
+def box_intersect(boxes):
+    r1 = boxes.repeat(len(boxes),1)
+    r2 = boxes.repeat(1,len(boxes)).view(len(boxes)*len(boxes), 4)
+
+
+    # determine the coordinates of the intersection rectangle
+    x_left = torch.stack((r1[:,0], r2[:,0]),dim=1).max(dim=1)[0]
+
+    y_top = torch.stack((r1[:,1], r2[:,1]),dim=1).max(dim=1)[0]
+
+    x_right = torch.stack((r1[:,2], r2[:,2]),dim=1).min(dim=1)[0]
+    
+    y_bottom = torch.stack((r1[:,3], r2[:,3]),dim=1).min(dim=1)[0]
+
+
+    intersection_area = (x_right - x_left) * (y_bottom - y_top)
+
+    intersection_area[(x_right < x_left) | (y_bottom < y_top)] = 0
+
+    intersection_area = intersection_area.view(len(boxes),len(boxes))
+    
+    ind = np.diag_indices(intersection_area.shape[0])
+
+    intersection_area[ind[0], ind[1]] = torch.zeros(intersection_area.shape[0]).cuda()
+
+    return intersection_area
+
 @registry.ROI_WEAK_LOSS.register("RoIRegLoss")
 class RoIRegLossComputation(object):
     """ Generic roi-level loss """
@@ -202,8 +234,11 @@ class RoIRegLossComputation(object):
         if cfg.loss == 'supcon':
             self.sim_loss = Supcon_Loss(self.temp)
         elif cfg.loss == 'supconv2':
-            self.sim_loss = SupConLossV2(self.temp)
+            self.sim_loss = [SupConLossV2(cfg.MODEL.ROI_BOX_HEAD.NUM_CLASSES -1 , self.temp) for i in range(3)]
         self.output_dir = cfg.OUTPUT_DIR
+
+        self.colors = [[0, 0, 0], [128, 0, 0], [0, 128, 0], [128, 128, 0], [0, 0, 128], [128, 0, 128], [0, 128, 128], [128, 128, 128], [64, 0, 0], [192, 0, 0], [64, 128, 0], [192, 128, 0], [64, 0, 128], [192, 0, 128], [64, 128, 128], [192, 128, 128], [0, 64, 0], [128, 64, 0], [0, 192, 0], [128, 192, 0], [0, 64, 128]]
+
 
     def filter_pseudo_labels(self, pseudo_labels, proposal, target):
         """ refine pseudo labels according to partial labels """
@@ -230,7 +265,7 @@ class RoIRegLossComputation(object):
 
         return pseudo_labels
 
-    def __call__(self, class_score, det_score, ref_scores, ref_bbox_preds, sim_feature, clean_pooled_feats, feature_extractor, model_sim, proposals, targets, epsilon=1e-8):
+    def __call__(self, class_score, det_score, ref_scores, ref_bbox_preds, sim_feature, clean_pooled_feats, feature_extractor, model_sim, proposals, targets, iteration=None, epsilon=1e-8):
         class_score = F.softmax(cat(class_score, dim=0), dim=1)
         class_score_list = class_score.split([len(p) for p in proposals])
 
@@ -262,89 +297,111 @@ class RoIRegLossComputation(object):
         return_acc_dict = dict(acc_img=0)
         num_refs = len(ref_scores)
 
+
+        ### Initializes the losses. 
         for i in range(num_refs):
             return_loss_dict['loss_ref_cls%d'%i] = 0
             return_loss_dict['loss_ref_reg%d'%i] = 0
             return_acc_dict['acc_ref%d'%i] = 0
 
+            return_loss_dict['loss_s%d'%i] = 0
+            return_acc_dict['loss_l_var%d'%i] = 0
+            return_acc_dict['loss_l_dist%d'%i] = 0
+
+
         pos_classes = [generate_img_label(num_classes, target.get_field('labels').unique(), device)[1:].eq(1).nonzero(as_tuple=False)[:,0] for target in targets]
         if self.contra:
-            return_loss_dict['loss_sim'] = 0
-            sim_feature = sim_feature.split([len(p) for p in proposals])
+            
             clean_pooled_feat = clean_pooled_feats.split([len(p) for p in proposals])
 
-            pgt_index = [[torch.zeros((0), dtype=torch.long, device=device) for x in range(num_classes-1)] for y in range(len(targets))]
-            pgt_collection = [torch.zeros((0), dtype=torch.float, device=device) for x in range(num_classes-1)]
-            pgt_update = [torch.zeros((0), dtype=torch.float, device=device) for x in range(num_classes-1)]
-            instance_diff = torch.zeros((0), dtype=torch.float, device=device)
-
-            for idx, (final_score_per_im, pos_classes_per_im, proposals_per_image) in enumerate(zip(final_score_list, pos_classes, proposals)):
-                for i in range(num_refs):
+            pgt_index = [[[torch.zeros((0), dtype=torch.long, device=device) for x in range(num_classes-1)] for z in range(num_refs)] for y in range(len(targets))]
+            pgt_update = [[torch.zeros((0,512,7,7), dtype=torch.float, device=device) for x in range(num_classes-1)] for ixx in range(3)]
+            pgt_instance = [[[torch.zeros((0), dtype=torch.long, device=device) for x in range(num_classes-1)] for z in range(num_refs)] for y in range(len(targets))]
+            
+            ### Normal OICR top scoring proposals selection
+            for i in range(num_refs):
+                sim_feature_i = sim_feature[i].split([len(p) for p in proposals])
+                for idx, (final_score_per_im, pos_classes_per_im, proposals_per_image) in enumerate(zip(final_score_list, pos_classes, proposals)):
                     source_score = final_score_per_im if i == 0 else F.softmax(ref_scores[i-1][idx], dim=1)
                     proposal_score = source_score[:, 1:].clone()
+
                     for pos_c in pos_classes_per_im:
                         max_index = torch.argmax(proposal_score[:,pos_c])
                         overlaps, _ = cal_iou(proposals_per_image, max_index, self.p_thres)
-                        pgt_index[idx][pos_c] = torch.cat((pgt_index[idx][pos_c], overlaps)).unique() ###
+                        
+                        pgt_instance[idx][i][pos_c] = torch.cat((pgt_instance[idx][i][pos_c], max_index[None])).unique() 
 
-                for pos_c in pos_classes_per_im:
-                    iou_samples = pgt_index[idx][pos_c]
-                    pgt_update[pos_c] = torch.cat((pgt_update[pos_c], sim_feature[idx][iou_samples])) ### iou sampling
+                        pgt_index[idx][i][pos_c] = torch.cat((pgt_index[idx][i][pos_c], overlaps)).unique() ###
 
-                    hardness = final_score_list[idx][iou_samples, pos_c+1] / final_score_list[idx][:,pos_c+1].sum()
-                    #hardness = avg_score_split[idx][iou_samples, pos_c+1] / avg_score_split[idx][:, pos_c+1].sum()
+                        pgt_update[i][pos_c] = torch.cat((pgt_update[i][pos_c], clean_pooled_feat[idx][max_index[None]]))
+               
 
-                    instance_diff = torch.cat((instance_diff, hardness))
-                    drop_logit = feature_extractor.forward_neck(feature_extractor.drop_pool(clean_pooled_feat[idx][iou_samples]))
-                    pgt_update[pos_c] = torch.cat((pgt_update[pos_c], model_sim(drop_logit) ))
 
-                    instance_diff = torch.cat((instance_diff, hardness))
+            ### Discovery 
+            foi_a_mais = [0.0,0.0,0.0]
+            for i in range(num_refs):
+                sim_feature_i = sim_feature[i].split([len(p) for p in proposals])
 
-                    noise_logit = feature_extractor.forward_neck(feature_extractor.noise_pool(clean_pooled_feat[idx][iou_samples]))
-                    pgt_update[pos_c] = torch.cat((pgt_update[pos_c], model_sim(noise_logit) ))
-                    instance_diff = torch.cat((instance_diff, hardness))
+                for idx, (final_score_per_im, pos_classes_per_im, proposals_per_image) in enumerate(zip(final_score_list, pos_classes, proposals)):
+                    d_v = cfg.MODEL.ROI_WEAK_HEAD.D_V 
 
-                    pgt_collection[pos_c] = pgt_update[pos_c].clone()
-
-            pgt_instance = [[[torch.zeros((0), dtype=torch.long, device=device) for x in range(num_classes-1)] for z in range(num_refs)] for y in range(len(targets))]
-
-            for idx, (final_score_per_im, pos_classes_per_im, proposals_per_image) in enumerate(zip(final_score_list, pos_classes, proposals)):
-                for i in range(num_refs):
                     source_score = final_score_per_im if i == 0 else F.softmax(ref_scores[i-1][idx], dim=1)
                     proposal_score = source_score[:, 1:].clone()
-
                     for pos_c in pos_classes_per_im:
-                        max_index = torch.argmax(proposal_score[:,pos_c])
+                        cls_mean =  self.sim_loss[i].means[pos_c]
 
-                        sim_mat = torch.mm(sim_feature[idx], sim_feature[idx].T)
-                        sim_thresh = torch.mm(sim_feature[idx][max_index].view(1,-1), pgt_collection[pos_c].T).mean()
 
-                        if pos_classes_per_im.shape[0] > 1:
-                            neg_classes = pos_classes_per_im[(pos_classes_per_im != pos_c)]
-                            sim_close = torch.ge(sim_mat[max_index], sim_thresh)
-                            for neg_c in neg_classes:
-                                neg_max_index = torch.argmax(proposal_score[:,neg_c])
-                                sim_close = torch.ge(sim_close, sim_mat[neg_max_index])
-                            sim_close = sim_close.nonzero(as_tuple=False).view(-1)
-                        else:
-                            sim_close = torch.ge(sim_mat[max_index], sim_thresh).nonzero(as_tuple=False).view(-1)
+                        sim_feat = sim_feature_i[idx]
+                        dists = torch.norm(cls_mean - sim_feat, dim=1)
 
-                        sim_close = easy_nms(proposals_per_image, sim_close, proposal_score[:,pos_c], nms_iou=self.nms)      ### operate nms
-                        sim_close = torch.cat((sim_close, max_index.view(-1))) if sim_close.nelement() == 0 else sim_close   ### avoid none
-                        pgt_instance[idx][i][pos_c] = torch.cat((pgt_instance[idx][i][pos_c], sim_close))
+                        similar_instances = torch.where(dists < d_v)[0]
 
-                        dup = torch.cat((sim_close, pgt_index[idx][pos_c])).unique()[torch.where(torch.cat((sim_close, pgt_index[idx][pos_c])).unique(return_counts=True)[1]>1)]
-                        sim_close = torch.cat((sim_close,dup)).unique()[torch.where(torch.cat((sim_close,dup)).unique(return_counts=True)[1]==1)]
-                        sim_close = torch.cat((sim_close, max_index.view(-1))) if sim_close.nelement() == 0 else sim_close
+                        top_scoring_box = pgt_instance[idx][i][pos_c]
 
-                        pgt_update[pos_c] = torch.cat((pgt_update[pos_c], sim_feature[idx][sim_close]))
-                        pgt_index[idx][pos_c] = torch.cat((pgt_index[idx][pos_c], sim_close)).unique()
+                        if len(similar_instances) > 0:
+                            foi_a_mais[i] += 1
+                            # print(len(proposals_per_image), proposal_score[:,pos_c].shape, similar_instances.shape, similar_instances.max())
+                            sim_close = easy_nms(proposals_per_image, similar_instances, proposal_score[:,pos_c], nms_iou=self.nms)      ### operate nms
 
-                        sim_hardness = final_score_list[idx][sim_close, pos_c+1] / final_score_list[idx][:,pos_c+1].sum()
-                        #sim_hardness = avg_score_split[idx][sim_close, pos_c+1] / avg_score_split[idx][:, pos_c+1].sum()
-                        instance_diff = torch.cat((instance_diff, sim_hardness.view(-1)))
+                            box_indexes = torch.cat((top_scoring_box, sim_close)).unique() 
 
-            return_loss_dict['loss_sim'] = self.sim_lmda * self.sim_loss(pgt_update, instance_diff, device)
+                            #### filtering.
+                            boxes_  = proposals_per_image[box_indexes].bbox
+                            scores_ = proposal_score[box_indexes,pos_c]
+
+                            # # #########
+                            areas = box_area(boxes_)[None].repeat(len(boxes_),1)
+                            intersections = box_intersect(boxes_)
+
+                            diff = intersections/areas
+                   
+                            s_keep_fast  = torch.ones(scores_.shape, dtype=bool).cuda()
+                            big_diff=diff>0.9
+                            if big_diff.any():
+                                positions = torch.where(big_diff)
+                                bigger_guys = scores_[positions[0]] > scores_[positions[1]]
+                                unkeep = torch.cat((positions[0][~bigger_guys], positions[1][bigger_guys])).unique()
+                                s_keep_fast[unkeep] = False
+
+
+                            # #########
+                            pgt_instance[idx][i][pos_c] = box_indexes[s_keep_fast]
+
+                        
+
+                       
+
+
+            for i_ref in range(3):
+
+                l_var, l_dist = self.sim_loss[i_ref](pgt_update[i_ref], feature_extractor, model_sim[i_ref], device, i_ref, cfg)
+
+                return_loss_dict['loss_s'+str(i_ref)] = (self.sim_lmda * (l_var + l_dist) ).squeeze()# + l_center)
+
+                return_acc_dict['loss_l_var'+str(i_ref)]    = l_var.squeeze()
+                return_acc_dict['loss_l_dist'+str(i_ref)]   = l_dist.squeeze()
+
+                return_acc_dict['a_mais'+str(i_ref)] = torch.tensor(foi_a_mais[i_ref]).cuda()
 
         for idx, (final_score_per_im, targets_per_im, proposals_per_image) in enumerate(zip(final_score_list, targets, proposals)):
             labels_per_im = targets_per_im.get_field('labels').unique()
@@ -355,18 +412,23 @@ class RoIRegLossComputation(object):
             # Region loss
             for i in range(num_refs):
                 source_score = final_score_per_im if i == 0 else F.softmax(ref_scores[i-1][idx], dim=1)
-                if not self.contra and self.refine_p == 0:           ### oicr_layer ###
-                    pseudo_labels, loss_weights, regression_targets = self.oicr_layer(
-                        proposals_per_image, source_score, labels_per_im, device, return_targets=True
-                        )
-                elif not self.contra and self.refine_p > 0:          ### mist layer ###
-                    pseudo_labels, loss_weights, regression_targets = self.mist_layer(
-                        proposals_per_image, source_score, labels_per_im, device, return_targets=True
-                        )
-                elif self.contra and self.refine_p == 0:                ### od layer ###
+                # if not self.contra and self.refine_p == 0:           ### oicr_layer ###
+                #     pseudo_labels, loss_weights, regression_targets = self.oicr_layer(
+                #         proposals_per_image, source_score, labels_per_im, device, return_targets=True
+                #         )
+                #     pause()
+                # elif not self.contra and self.refine_p > 0:          ### mist layer ###
+                #     pseudo_labels, loss_weights, regression_targets = self.mist_layer(
+                #         proposals_per_image, source_score, labels_per_im, device, return_targets=True
+                #         )
+                #     pause()
+                # el
+                
+                if self.contra and self.refine_p == 0:                ### od layer ###
                     pseudo_labels, loss_weights, regression_targets = self.od_layer(
                     proposals_per_image, source_score, labels_per_im, device, pgt_instance[idx][i], return_targets=True
                     )
+
                 if self.roi_refine:
                     pseudo_labels = self.filter_pseudo_labels(pseudo_labels, proposals_per_image, targets_per_im)
 

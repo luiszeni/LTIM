@@ -7,8 +7,6 @@ import torch
 
 from .bounding_box import BoxList
 from torchvision.ops import nms
-from wetectron.layers import nms as _box_nms
-#import wetectron.utils.cython_nms as cython_nms
 
 def boxlist_nms(boxlist, nms_thresh, max_proposals=-1, score_field="scores"):
     """

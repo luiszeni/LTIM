@@ -94,6 +94,8 @@ class COCODataset(torchvision.datasets.coco.CocoDetection):
             self.id_field = 'indexes' if 'indexes' in self.proposals else 'ids'  # compat fix
             # _sort_proposals(self.proposals, self.id_field)
             self.top_k = -1
+            if "train" in proposal_file:
+                self.top_k = 3000
         else:
             self.proposals = None
 
@@ -109,18 +111,23 @@ class COCODataset(torchvision.datasets.coco.CocoDetection):
             img_id = self.ids[idx]
             id_field = 'indexes' if 'indexes' in self.proposals else 'ids'  # compat fix
             roi_idx = self.proposals[id_field].index(img_id)
-            rois = self.proposals['boxes'][roi_idx]
+            rois   = self.proposals['boxes'][roi_idx]
+            scores = self.proposals['scores'][roi_idx]
 
             # remove duplicate, clip, remove small boxes, and take top k
             keep = unique_boxes(rois)
-            rois = rois[keep, :]
-            # scores = scores[keep]
+
+            rois   = rois[keep, :]
+            scores = scores[keep]
+
+            if len(scores) > self.top_k:
+                scores_order = scores.argsort()[::-1]
+                rois = rois[scores_order[:self.top_k]]
+
             rois = BoxList(torch.tensor(rois), img.size, mode="xyxy")
             rois = rois.clip_to_image(remove_empty=True)
             rois = remove_small_boxes(boxlist=rois, min_size=2)
-            if self.top_k > 0:
-                rois = rois[[range(self.top_k)]]
-                # scores = scores[:self.top_k]
+
         else:
             rois = None
 

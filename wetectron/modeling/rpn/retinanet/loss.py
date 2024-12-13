@@ -9,7 +9,7 @@ from torch.nn import functional as F
 from ..utils import concat_box_prediction_layers
 
 from wetectron.layers import smooth_l1_loss
-from wetectron.layers import SigmoidFocalLoss
+# from wetectron.layers import SigmoidFocalLoss
 from wetectron.modeling.matcher import Matcher
 from wetectron.modeling.utils import cat
 from wetectron.structures.boxlist_ops import boxlist_iou

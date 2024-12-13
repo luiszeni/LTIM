@@ -14,6 +14,9 @@ import random
 import warnings
 import numpy as np
 import torch
+torch.set_float32_matmul_precision("high")
+# os.environ["PYTORCH_NO_CUDA_MEMORY_CACHING"] = "expandable_segments:True"
+
 from wetectron.config import cfg
 from wetectron.data import make_data_loader
 from wetectron.solver import make_lr_scheduler, make_lr_cdb_scheduler
@@ -30,10 +33,6 @@ from wetectron.utils.miscellaneous import mkdir, save_config, seed_all_rng
 from wetectron.utils.metric_logger import (MetricLogger, TensorboardLogger)
 from wetectron.modeling.cdb import ConvConcreteDB
 
-try:
-    from apex import amp
-except ImportError:
-    raise ImportError('Use APEX for multi-precision via apex.amp')
 
 def train(cfg, local_rank, distributed, use_tensorboard=False):
     model = build_detection_model(cfg)
@@ -45,7 +44,8 @@ def train(cfg, local_rank, distributed, use_tensorboard=False):
     # Initialize mixed-precision training
     use_mixed_precision = cfg.DTYPE == "float16"
     amp_opt_level = 'O1' if use_mixed_precision else 'O0'
-    model, optimizer = amp.initialize(model, optimizer, opt_level=amp_opt_level)
+    
+    # model, optimizer = amp.initialize(model, optimizer, opt_level=amp_opt_level)
 
     if distributed:
         model = torch.nn.parallel.DistributedDataParallel(
@@ -107,10 +107,10 @@ def train_cdb(cfg, local_rank, distributed, use_tensorboard=False):
     scheduler_cdb = make_lr_cdb_scheduler(cfg, optimizer_cdb)
 
     # Initialize mixed-precision training
-    use_mixed_precision = cfg.DTYPE == "float16"
-    amp_opt_level = 'O1' if use_mixed_precision else 'O0'
-    model, optimizer = amp.initialize(model, optimizer, opt_level=amp_opt_level)
-    model_cdb, optimizer_cdb, = amp.initialize(model_cdb, optimizer_cdb, opt_level=amp_opt_level)
+    # use_mixed_precision = cfg.DTYPE == "float16"
+    # amp_opt_level = 'O1' if use_mixed_precision else 'O0'
+    # model, optimizer = amp.initialize(model, optimizer, opt_level=amp_opt_level)
+    # model_cdb, optimizer_cdb, = amp.initialize(model_cdb, optimizer_cdb, opt_level=amp_opt_level)
 
     if distributed:
         model = torch.nn.parallel.DistributedDataParallel(

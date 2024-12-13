@@ -20,59 +20,13 @@ from wetectron.modeling.utils import cat
 from wetectron.structures.boxlist_ops import cat_boxlist
 from wetectron.modeling.roi_heads.sim_head.sim_net import Sim_Net
 
-class ROIWeakHead(torch.nn.Module):
-    """
-    Generic Box Head class.
-    """
-
-    def __init__(self, cfg, in_channels):
-        super(ROIWeakHead, self).__init__()
-        self.feature_extractor = make_roi_box_feature_extractor(cfg, in_channels)
-        self.predictor = make_roi_weak_predictor(cfg, self.feature_extractor.out_channels)
-        self.post_processor = weak_roi_box_post_processor(cfg)
-        self.loss_evaluator = make_roi_weak_loss_evaluator(cfg)
-
-    def forward(self, features, proposals, targets=None, model_cdb=None):
-        """
-        Arguments:
-            features (list[Tensor]): feature-maps from possibly several levels
-            proposals (list[BoxList]): proposal boxes
-            targets (list[BoxList], optional): the ground-truth targets.
-
-        Returns:
-            x (Tensor): the result of the feature extractor
-            proposals (list[BoxList]): during training, the proposals
-                are returned. During testing, the predicted boxlists are returned
-            losses (dict[Tensor]): During training, returns the losses for the
-                head. During testing, returns an empty dict.
-        """
-        # extract features that will be fed to the final classifier. The
-        # feature_extractor generally corresponds to the pooler + heads
-        x = self.feature_extractor(features, proposals)
-        # final classifier that converts the features into predictions
-        cls_score, det_score, ref_scores = self.predictor(x, proposals)
-        if not self.training:
-            if ref_scores == None:
-                final_score = cls_score * det_score
-            else:
-                final_score = torch.mean(torch.stack(ref_scores), dim=0)
-            result = self.post_processor(final_score, proposals)
-            return x, result, {}, {}
-
-        loss_img, accuracy_img = self.loss_evaluator([cls_score], [det_score], ref_scores, proposals, targets)
-
-        return (
-            x,
-            proposals,
-            loss_img,
-            accuracy_img
-        )
-
-
 class ROIWeakRegHead(torch.nn.Module):
     """ Generic Box Head class w/ regression. """
     def __init__(self, cfg, in_channels):
         super(ROIWeakRegHead, self).__init__()
+
+
+        
         self.feature_extractor = make_roi_box_feature_extractor(cfg, in_channels)
         self.predictor = make_roi_weak_predictor(cfg, self.feature_extractor.out_channels)
         self.loss_evaluator = make_roi_weak_loss_evaluator(cfg)
@@ -82,7 +36,8 @@ class ROIWeakRegHead(torch.nn.Module):
         self.HEUR = cfg.MODEL.ROI_WEAK_HEAD.REGRESS_HEUR
         self.roi_sampler = make_roi_sampler(cfg) if cfg.MODEL.ROI_WEAK_HEAD.PARTIAL_LABELS != "none" else None
         self.DB_METHOD = cfg.DB.METHOD
-        self.model_sim = Sim_Net(cfg, self.feature_extractor.out_channels)
+
+        self.model_sim = nn.ModuleList([ Sim_Net(cfg, self.feature_extractor.out_channels) for i in range(3)])
 
     def go_through_cdb(self, features, proposals, model_cdb):
         if not self.training or self.DB_METHOD == "none":
@@ -107,7 +62,7 @@ class ROIWeakRegHead(torch.nn.Module):
         clean_roi_feats, clean_pooled_feats = self.feature_extractor.forward(features, proposals)
 
         if self.training:
-            sim_feature = self.model_sim(clean_roi_feats)
+            sim_feature = [self.model_sim[i](clean_roi_feats) for i in range(3)]
             aug_pooled_feats = self.go_through_cdb(clean_pooled_feats, proposals, model_cdb=model_cdb)
             aug_roi_feats = self.feature_extractor.forward_neck(aug_pooled_feats)
             cls_score, det_score, ref_scores, ref_bbox_preds = self.predictor(aug_roi_feats, proposals)
@@ -117,7 +72,9 @@ class ROIWeakRegHead(torch.nn.Module):
             result = self.testing_forward(cls_score, det_score, proposals, ref_scores, ref_bbox_preds)
             return clean_roi_feats, result, {}, {}
 
-        loss_img, accuracy_img = self.loss_evaluator([cls_score], [det_score], ref_scores, ref_bbox_preds, sim_feature, clean_pooled_feats, self.feature_extractor, self.model_sim, proposals, targets)
+        loss_img, accuracy_img = self.loss_evaluator([cls_score], [det_score], ref_scores, ref_bbox_preds, 
+                                                     sim_feature, clean_pooled_feats, self.feature_extractor, 
+                                                     self.model_sim, proposals, targets, iteration=iteration)
 
         return (aug_roi_feats, proposals, loss_img, accuracy_img)
 
@@ -143,6 +100,7 @@ class ROIWeakRegHead(torch.nn.Module):
         else:
             raise ValueError
         return result
+    
 
 
 def build_roi_weak_head(cfg, in_channels):
@@ -153,5 +111,5 @@ def build_roi_weak_head(cfg, in_channels):
     """
     if cfg.MODEL.ROI_WEAK_HEAD.REGRESS_ON:
         return ROIWeakRegHead(cfg, in_channels)
-    else:
-        return ROIWeakHead(cfg, in_channels)
+    # else:
+    #     return ROIWeakHead(cfg, in_channels)

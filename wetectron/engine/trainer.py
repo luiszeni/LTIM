@@ -7,9 +7,9 @@ import datetime
 import logging
 import time
 import torch
-from apex import amp
 from wetectron.utils.comm import get_world_size
-import torch.nn.functional as F
+
+
 
 def reduce_loss_dict(loss_dict):
     """
@@ -90,7 +90,6 @@ def do_train(
             if cur_lr > 1e-7 and cur_lr != new_lr:
                 update_momentum(optimizer, cur_lr, new_lr, logger)
 
-        #v_storage = F.normalize(torch.FloatTensor(20, 128).uniform_(-1, 1).to(device),dim=1)
         iteration = iteration + 1
         arguments["iteration"] = iteration
         iter_dict['iter'] = iteration
@@ -109,11 +108,7 @@ def do_train(
         metrics_reduced = reduce_loss_dict(metrics)
         meters.update(**metrics_reduced)
 
-
-        # Note: If mixed precision is not used, this ends up doing nothing
-        # Otherwise apply loss scaling for mixed-precision recipe
-        with amp.scale_loss(losses, optimizer) as scaled_losses:
-            scaled_losses.backward()
+        losses.backward()
 
         if iteration % iter_size == 0:
             optimizer.step()

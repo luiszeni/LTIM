@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 #import fvcore.nn.weight_init as weight_init
 from wetectron.modeling.poolers import Pooler
-
+from pdb import set_trace as pause
 class Sim_Net(nn.Module):
     def __init__(self, config, in_dim):
         super(Sim_Net, self).__init__()
@@ -23,4 +23,6 @@ class Sim_Net(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, roi_feat):
-        return F.normalize(self.mlp(roi_feat), dim=1)
+        # return F.softmax(self.mlp(roi_feat), dim=1)
+        return torch.sigmoid(self.mlp(roi_feat))
+        # return F.normalize(self.mlp(roi_feat), dim=1)
