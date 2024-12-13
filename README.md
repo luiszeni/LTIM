@@ -1,40 +1,20 @@
-<div align="center">
-  <h1> Object Discovery via Contrastive Learning for Weakly Supervised Object Detection</h1>
-</div><div align="center">
-  <h3>Jinhwan Seo, Wonho Bae, Danica J. Sutherland, Junhyug Noh, and Daijin Kim</h3>
-</div>
-</div><div align="center">
-  <h3><a href="https://github.com/jinhseo/OD-WSCL">[Paper]</a>, <a href="https://jinhseo.github.io/research/wsod.html">[Project page]</a></h3>
-</div>
-<br /><div align="center">
-  <img src="./teaser.png" alt="result" width="900"/>
-</div>
-
-The official implementation of ECCV2022 paper: "Object Discovery via Contrastive Learning for Weakly Supervised Object Detection"  
-
-[![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/object-discovery-via-contrastive-learning-for/weakly-supervised-object-detection-on-ms-coco)](https://paperswithcode.com/sota/weakly-supervised-object-detection-on-ms-coco?p=object-discovery-via-contrastive-learning-for)  
-[![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/object-discovery-via-contrastive-learning-for/weakly-supervised-object-detection-on-ms-coco-1)](https://paperswithcode.com/sota/weakly-supervised-object-detection-on-ms-coco-1?p=object-discovery-via-contrastive-learning-for)  
-[![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/object-discovery-via-contrastive-learning-for/weakly-supervised-object-detection-on-pascal)](https://paperswithcode.com/sota/weakly-supervised-object-detection-on-pascal?p=object-discovery-via-contrastive-learning-for)  
-[![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/object-discovery-via-contrastive-learning-for/weakly-supervised-object-detection-on-pascal-1)](https://paperswithcode.com/sota/weakly-supervised-object-detection-on-pascal-1?p=object-discovery-via-contrastive-learning-for)
 ## Environment setup:
 
 * [Python 3.7](https://pytorch.org)
 * [CUDA 11.0](https://developer.nvidia.com/cuda-toolkit)
 * [PyTorch 1.7.1](https://pytorch.org)
 ```bash
-git clone https://github.com/jinhseo/OD-WSCL/
-cd OD-WSCL
+git clone https://github.com/luiszeni/wsod_memory_discovery
+cd wsod_memory_discovery
 
-conda create --name OD-WSCL python=3.7
-conda activate OD-WSCL
+conda create --name WMD python=3.8.16
+conda activate WMD
 
-pip install ninja yacs cython matplotlib tqdm opencv-python tensorboardX pycocotools
-conda install pytorch==1.7.1 torchvision==0.8.2 cudatoolkit=11.0 -c pytorch
+pip install ninja yacs cython matplotlib tqdm opencv-python  pycocotools
+pip install torch==2.0 torchvision==0.15.1 
 
-git clone --branch 22.04-dev https://github.com/NVIDIA/apex.git
-cd apex
-pip install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./
-cd ../
+pip install git+https://github.com/facebookresearch/fvcore.git
+
 python setup.py build develop
 ```
 ## Dataset:
@@ -88,13 +68,9 @@ python -m torch.distributed.launch --nproc_per_node={NO_GPU} tools/train_net.py
 ```
 Example:
 ```bash
-python -m torch.distributed.launch --nproc_per_node=1 tools/train_net.py 
-                                   --config-file "configs/voc07_contra_db_b8_lr0.01_mcg.yaml" 
-                                   OUTPUT_DIR OD-WSCL/output 
-                                   nms 0.1 
-                                   lmda 0.03 
-                                   iou 0.5
-                                   temp 0.2
+python3 tools/train_net.py  --config-file "configs/voc/voc07_contra_db_b8_lr0.01_mcg.yaml
+"  OUTPUT_DIR outputs/baseline_voc_07  nms 0.1  lmda 0.03  iou 0.5 temp 0.2
+
 ```
 Note: We trained our model on a single large-memory GPU (<em>e.g.</em>, A100 40GB) to maintain large mini-batch size for the best performance.  
 The hyperparameter settings may vary with multiple small GPUs, and results will be provided later.
