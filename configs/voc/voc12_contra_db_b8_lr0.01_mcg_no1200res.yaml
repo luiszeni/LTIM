@@ -22,11 +22,11 @@ MODEL:
 DB:
   METHOD: 'dropblock'
 DATASETS:
-  TRAIN: ("voc_2007_trainval",)
-  TEST: ("voc_2007_test",)
+  TRAIN: ("voc_2012_trainval",)
+  TEST: ("voc_2012_test",)
 PROPOSAL_FILES:
-  TRAIN: ('proposal/MCG/voc/MCG-voc07_trainval.pkl',)
-  TEST: ('proposal/MCG/voc/MCG-voc07_test.pkl',)
+  TRAIN: ('proposal/MCG/voc/MCG-voc12_trainval.pkl',)
+  TEST: ('proposal/MCG/voc/MCG-voc12_test.pkl',)
 DATALOADER:
   SIZE_DIVISIBILITY: 32
 INPUT:
@@ -39,10 +39,12 @@ SOLVER:
   BASE_LR: 0.01
   WEIGHT_DECAY: 0.0001
   WARMUP_ITERS: 200
-  STEPS: (20000, 26700)
-  MAX_ITER: 30000
-  CHECKPOINT_PERIOD: 10000
+  STEPS: (40000, 53400)
+  MAX_ITER: 60000
+  CHECKPOINT_PERIOD: 5000
   CONTRA: True
+  #CLASS_BATCH: True
+  #CBS: True
 SOLVER_CDB:
   BASE_LR: 0.0001
   GAMMA: 3.0
